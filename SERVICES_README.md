@@ -78,6 +78,151 @@
 
 | Service | Purpose | Input Required | Output | Typical Use Case |
 |----------|----------|----------------|---------|------------------|
-| **Detection** | Find faces | 1 image | Locations + attributes | “Where are the faces?” |
-| **Recognition** | Identify people | 1 image + trained collection | Names + confidence | “Who is this person?” |
-| **Verification** | Compare faces | 2 images | Similarity score | “Are these the same person?” |
+| **Detection** | Find faces | 1 image | Locations + attributes | "Where are the faces?" |
+| **Recognition** | Identify people | 1 image + trained collection | Names + confidence | "Who is this person?" |
+| **Verification** | Compare faces | 2 images | Similarity score | "Are these the same person?" |
+
+---
+
+## 📹 Video Stream & CCTV Integration
+
+CompreFace **supports real-time video processing** including CCTV cameras, IP cameras, and live webcam feeds. Here's how to integrate it:
+
+### 🎥 Real-Time Processing Approach
+
+CompreFace processes **individual frames** rather than video streams directly. The workflow is:
+
+1. **Extract frames** from video stream (using OpenCV, FFmpeg, or similar)
+2. **Send frames** to CompreFace API as images
+3. **Process results** in real-time
+4. **Display results** with bounding boxes and names
+
+### 🌐 Webcam Demo Example
+
+CompreFace includes a **live webcam demo** (`docs/demos/webcam_demo.html`) that shows:
+
+```javascript
+// Capture webcam frame
+navigator.mediaDevices.getUserMedia({video: {width: 640, height: 480}})
+  .then(function(stream) {
+    video.srcObject = stream;
+    
+    // Process each frame
+    function processFrame() {
+      ctx.drawImage(video, 0, 0, 640, 480);
+      canvas.toBlob(function(blob) {
+        
+        // Send frame to CompreFace
+        fetch('http://localhost:8000/api/v1/recognition/recognize', {
+          method: "POST",
+          headers: {"x-api-key": apiKey},
+          body: formData
+        }).then(r => r.json()).then(function(data) {
+          
+          // Draw bounding box and name
+          if(data.result) {
+            let box = data.result[0].box;
+            let name = data.result[0].subjects[0].subject;
+            ctx.strokeRect(box.x_min, box.y_min, 
+                          box.x_max - box.x_min, box.y_max - box.y_min);
+            ctx.strokeText(name, box.x_min, box.y_min - 20);
+          }
+          
+          // Process next frame
+          requestAnimationFrame(processFrame);
+        });
+      }, 'image/jpeg');
+    }
+  });
+```
+
+### 📺 CCTV Camera Integration
+
+For **IP cameras** and **RTSP streams**, you can use:
+
+#### **Python Integration Example:**
+```python
+import cv2
+import requests
+import base64
+
+# Connect to RTSP stream
+cap = cv2.VideoCapture('rtsp://camera_ip:port/stream')
+
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
+        
+    # Convert frame to JPEG
+    _, buffer = cv2.imencode('.jpg', frame)
+    img_base64 = base64.b64encode(buffer).decode('utf-8')
+    
+    # Send to CompreFace
+    response = requests.post(
+        'http://localhost:8000/api/v1/recognition/recognize',
+        headers={'x-api-key': 'your-api-key', 'Content-Type': 'application/json'},
+        json={'file': img_base64}
+    )
+    
+    # Process results
+    data = response.json()
+    for face in data.get('result', []):
+        box = face['box']
+        subject = face.get('subjects', [{}])[0].get('subject', 'Unknown')
+        
+        # Draw bounding box
+        cv2.rectangle(frame, (box['x_min'], box['y_min']), 
+                     (box['x_max'], box['y_max']), (0, 255, 0), 2)
+        cv2.putText(frame, subject, (box['x_min'], box['y_min']-10), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+    
+    # Display result
+    cv2.imshow('CCTV Recognition', frame)
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
+```
+
+### ⚡ Performance Considerations
+
+**For Real-Time Processing:**
+
+✅ **Use GPU builds** for better performance (`custom-builds/` folder)  
+✅ **Reduce frame rate** (process every 2nd or 3rd frame)  
+✅ **Lower resolution** for faster processing  
+✅ **Multiple API servers** for high-throughput scenarios  
+✅ **Async processing** to avoid blocking  
+
+**Recommended Setup:**
+- **Detection Service**: For crowd counting, mask detection
+- **Recognition Service**: For identifying specific individuals
+- **Custom GPU Build**: For real-time processing (see `/custom-builds/`)
+
+### 🏗️ Production Architecture
+
+For **large-scale CCTV systems**:
+
+```
+[CCTV Cameras] → [Frame Extractor] → [Load Balancer] → [CompreFace API Cluster]
+                                                     ↓
+[Alert System] ← [Database] ← [Result Processor] ← [Recognition Results]
+```
+
+**Key Components:**
+- **Frame Extractor**: OpenCV/FFmpeg to extract frames from RTSP
+- **Load Balancer**: Distribute requests across multiple CompreFace instances  
+- **GPU Nodes**: Run CompreFace with GPU acceleration
+- **Result Processor**: Handle recognition results and trigger alerts
+- **Database**: Store identifications and generate reports
+
+### 🚀 Getting Started with Video Streams
+
+1. **Start with webcam demo**: `docs/demos/webcam_demo.html`
+2. **Test with your camera**: Use Python + OpenCV
+3. **Scale up**: Use GPU builds and multiple API servers
+4. **Production**: Implement proper architecture with load balancing
+
+**CompreFace is ideal for real-time surveillance and CCTV systems!** 🎯
