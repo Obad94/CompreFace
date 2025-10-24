@@ -14,3 +14,40 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Batch Face Processing ###
+# Image processing folders
+group_photos/
+processed_crops/
+
+# Individual cropped face files  
+face_*.png
+cropped_face.png
+
+# Large image files (prevent accidental commits of large media)
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.tiff
+*.webp
+*.ico
+# But allow documentation and sample images
+!docs/**/*.png
+!docs/**/*.jpg
+!sample_images/**/*.png
+!sample_images/**/*.jpg
+
+### Python ###
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+
+### Temporary files ###
+*.tmp
+*.temp
+temp/
+tmp/
