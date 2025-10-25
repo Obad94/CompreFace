@@ -30,6 +30,7 @@ const DIFY_API_KEY = process.env.DIFY_API_KEY || 'your-dify-api-key';
 const DIFY_API_URL = process.env.DIFY_API_URL || 'https://api.dify.ai/v1';
 const COMPREFACE_URL = process.env.COMPREFACE_URL || 'http://localhost:8000';
 const COMPREFACE_API_KEY = process.env.COMPREFACE_API_KEY || 'your-compreface-api-key';
+const DIFY_CHAT_URL = process.env.DIFY_CHAT_URL || 'http://localhost/chat/KjfiZpNJ1Klg1Ueb';
 const PORT = process.env.PORT || 8787;
 
 // In-memory storage (use Redis/Database in production)
@@ -45,6 +46,17 @@ app.get('/health', (req, res) => {
     status: 'healthy',
     service: 'CompreFace-Dify Relay',
     timestamp: new Date().toISOString()
+  });
+});
+
+/**
+ * Configuration endpoint for frontend
+ */
+app.get('/config', (req, res) => {
+  res.json({
+    dify_chat_url: DIFY_CHAT_URL,
+    camera_id: 'entrance-01',
+    relay_version: '1.0.0'
   });
 });
 

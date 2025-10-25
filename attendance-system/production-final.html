@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CompreFace + Dify - Production (Final)</title>
+  <title>CompreFace + Dify - Production (Optimized)</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { 
@@ -50,7 +50,7 @@
       letter-spacing: 0.5px;
     }
 
-    .control-group input {
+    .control-group input, .control-group select {
       padding: 6px 10px;
       border: 1px solid rgba(255,255,255,0.2);
       border-radius: 6px;
@@ -219,7 +219,7 @@
 
       <div class="control-group">
         <label>FPS (Frame Rate)</label>
-        <input id="fps" type="number" value="10" min="1" max="30">
+        <input id="fps" type="number" value="5" min="1" max="15">
       </div>
 
       <div class="control-group">
@@ -234,7 +234,7 @@
 
       <div class="control-group">
         <label>Auto-Notify AI</label>
-        <select id="autoNotify" style="padding: 6px 10px; border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; background: rgba(255,255,255,0.1); color: white; font-size: 13px;">
+        <select id="autoNotify">
           <option value="true">Enabled</option>
           <option value="false">Disabled</option>
         </select>
@@ -268,23 +268,14 @@
       <p>Powered by Dify - Real-time student information</p>
     </div>
     
-    <!-- IMPORTANT: Replace with your actual Dify embed URL -->
-    <!-- Dify Chatbot Embed -->
+    <!-- Dify Chatbot Embed - Set DIFY_CHAT_URL in config.js -->
     <iframe 
       id="difyEmbed"
-      src="http://localhost/chat/KjfiZpNJ1Klg1Ueb"
+      src=""
       style="width: 100%; height: 100%; border: none;"
       frameborder="0"
       allow="microphone; clipboard-write; camera">
     </iframe>
-    <!-- 
-      To get your Dify embed URL:
-      1. Go to Dify dashboard
-      2. Open your chatbot app
-      3. Click "Publish" → "Embed"
-      4. Copy the iframe src URL
-      5. Replace above
-    -->
   </div>
 
 <script>
@@ -292,14 +283,16 @@
   'use strict';
 
   // ═══════════════════════════════════════════════════
-  // CONFIGURATION
+  // CONFIGURATION - Set these in relay server .env file
   // ═══════════════════════════════════════════════════
   
   const CONFIG = {
     RELAY_URL: 'http://localhost:8787',
-    CAMERA_ID: 'entrance-01', // Change per camera location
-    DEBOUNCE_MS: 3000, // Don't notify same person within 3 seconds
-    FACE_PLUGINS: 'age,gender', // Optional: age, gender, mask, landmarks
+    CAMERA_ID: 'entrance-01',
+    DEBOUNCE_MS: 3000,
+    FACE_PLUGINS: 'age,gender',
+    // Dify chat URL - fetch from relay server
+    DIFY_CHAT_URL: null
   };
 
   // ═══════════════════════════════════════════════════
@@ -317,6 +310,7 @@
   const statusText = document.getElementById('statusText');
   const fpsCounter = document.getElementById('fpsCounter');
   const detectionCounter = document.getElementById('detectionCounter');
+  const difyEmbed = document.getElementById('difyEmbed');
 
   // ═══════════════════════════════════════════════════
   // STATE
@@ -326,9 +320,43 @@
   let running = false;
   let lastTick = 0;
   let totalDetections = 0;
-  let lastNotifyTime = {}; // {camera_id-name: timestamp} for debouncing
+  let lastNotifyTime = {};
   let fpsFrames = [];
   let conversationId = null;
+  let recognizing = false; // CRITICAL: Prevent overlapping requests
+  let lastRecognitionTime = 0; // Additional throttling
+
+  // ═══════════════════════════════════════════════════
+  // INITIALIZE - Load Dify chat URL from relay server
+  // ═══════════════════════════════════════════════════
+
+  async function loadConfig() {
+    try {
+      const response = await fetch(`${CONFIG.RELAY_URL}/config`);
+      const config = await response.json();
+      
+      if (config.dify_chat_url) {
+        CONFIG.DIFY_CHAT_URL = config.dify_chat_url;
+        difyEmbed.src = config.dify_chat_url;
+        console.log('[✓] Dify chat URL loaded:', config.dify_chat_url);
+      } else {
+        // Fallback: Try to get from localStorage or use default
+        const savedUrl = localStorage.getItem('dify_chat_url');
+        if (savedUrl) {
+          difyEmbed.src = savedUrl;
+          console.log('[✓] Using saved Dify URL:', savedUrl);
+        } else {
+          console.warn('[⚠] No Dify chat URL configured!');
+          console.warn('[⚠] Set DIFY_CHAT_URL in relay server .env file');
+        }
+      }
+    } catch (err) {
+      console.error('[✗] Failed to load config:', err);
+      // Try fallback
+      const savedUrl = localStorage.getItem('dify_chat_url') || 'http://localhost/chat/KjfiZpNJ1Klg1Ueb';
+      difyEmbed.src = savedUrl;
+    }
+  }
 
   // ═══════════════════════════════════════════════════
   // CAMERA CONTROL
@@ -347,6 +375,8 @@
 
       running = true;
       lastTick = 0;
+      recognizing = false;
+      lastRecognitionTime = 0;
       
       startBtn.disabled = true;
       stopBtn.disabled = false;
@@ -354,9 +384,8 @@
       statusText.textContent = '🔒 Secure - Scanning...';
 
       console.log('%c[✓] SECURE MODE ACTIVE', 'color: #4caf50; font-weight: bold');
-      console.log('[✓] All API keys secured on server');
-      console.log('[✓] Multi-face detection enabled');
-      console.log('[✓] Configurable thresholds active');
+      console.log('[✓] Optimized performance');
+      console.log('[✓] ECONNRESET protection enabled');
 
       requestAnimationFrame(loop);
 
@@ -369,6 +398,7 @@
 
   function stop() {
     running = false;
+    recognizing = false;
     
     if (stream) {
       stream.getTracks().forEach(t => t.stop());
@@ -386,14 +416,14 @@
   }
 
   // ═══════════════════════════════════════════════════
-  // RECOGNITION LOOP
+  // OPTIMIZED RECOGNITION LOOP
   // ═══════════════════════════════════════════════════
 
   async function loop(ts) {
     if (!running) return;
 
     // FPS throttling
-    const fps = Math.max(1, Math.min(30, Number(document.getElementById('fps').value) || 10));
+    const fps = Math.max(1, Math.min(15, Number(document.getElementById('fps').value) || 5));
     const frameDuration = 1000 / fps;
     
     if (ts - lastTick < frameDuration) {
@@ -407,6 +437,23 @@
     fpsFrames = fpsFrames.filter(t => ts - t < 1000);
     fpsCounter.textContent = `FPS: ${fpsFrames.length}`;
 
+    // CRITICAL FIX: Don't overwhelm CompreFace
+    // If recognition is in progress, skip this frame
+    if (recognizing) {
+      requestAnimationFrame(loop);
+      return;
+    }
+
+    // Additional throttling: Minimum 500ms between requests
+    const now = Date.now();
+    if (now - lastRecognitionTime < 500) {
+      requestAnimationFrame(loop);
+      return;
+    }
+
+    lastRecognitionTime = now;
+    recognizing = true;
+
     // Capture and recognize
     ctx1.drawImage(videoEl, 0, 0, c1.width, c1.height);
     
@@ -416,13 +463,14 @@
       } catch (err) {
         console.error('[✗] Recognition error:', err);
       } finally {
+        recognizing = false;
         if (running) requestAnimationFrame(loop);
       }
-    }, 'image/jpeg', 0.90);
+    }, 'image/jpeg', 0.80); // Lower quality for better performance
   }
 
   // ═══════════════════════════════════════════════════
-  // FACE RECOGNITION
+  // FACE RECOGNITION WITH TIMEOUT
   // ═══════════════════════════════════════════════════
 
   async function recognize(blob) {
@@ -430,22 +478,26 @@
     const detProb = Number(document.getElementById('detProb').value) || 0.75;
     const autoNotify = document.getElementById('autoNotify').value === 'true';
 
-    // Build request
     const fd = new FormData();
     fd.append('file', blob, 'frame.jpg');
 
-    // Send to SECURE relay endpoint (not directly to CompreFace!)
     const url = `${CONFIG.RELAY_URL}/recognize-frame?` + new URLSearchParams({
       det_prob_threshold: detProb,
       face_plugins: CONFIG.FACE_PLUGINS
     });
 
     try {
+      // Add timeout to prevent hanging requests
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+
       const res = await fetch(url, {
         method: 'POST',
-        body: fd
-        // NO API KEY - relay handles it securely!
+        body: fd,
+        signal: controller.signal
       });
+
+      clearTimeout(timeoutId);
 
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
@@ -457,12 +509,11 @@
       ctx2.drawImage(videoEl, 0, 0, c2.width, c2.height);
 
       if (!data || !Array.isArray(data.result) || data.result.length === 0) {
-        // No faces detected
         detectionCounter.textContent = 'Faces: 0';
         return;
       }
 
-      // MULTI-FACE SUPPORT: Process ALL detected faces
+      // Process faces
       let validFaces = 0;
       
       for (const face of data.result) {
@@ -470,12 +521,10 @@
         const subjects = face.subjects || [];
         
         if (subjects.length === 0) {
-          // Face detected but not recognized - draw orange box
           drawBox(box, 'Unknown', 0, '#ff9800');
           continue;
         }
 
-        // Get best match
         const subject = subjects[0];
         const name = subject.subject;
         const similarity = subject.similarity;
@@ -483,16 +532,12 @@
 
         if (isValid) {
           validFaces++;
-          
-          // Draw green box for valid detection
           drawBox(box, name, similarity, '#4caf50');
 
-          // Auto-notify Dify if enabled and confidence is high
           if (autoNotify && similarity >= minSimilarity) {
             await notifyDify(name, similarity, face.age, face.gender);
           }
         } else {
-          // Low confidence - draw yellow box
           drawBox(box, name, similarity, '#ffeb3b');
         }
       }
@@ -501,8 +546,15 @@
       totalDetections = validFaces;
 
     } catch (err) {
-      console.error('[✗] Recognition failed:', err);
+      if (err.name === 'AbortError') {
+        console.warn('[⚠] Recognition timeout - skipping frame');
+      } else {
+        console.error('[✗] Recognition failed:', err);
+      }
       statusText.textContent = '⚠ Recognition error';
+      setTimeout(() => {
+        if (running) statusText.textContent = '🔒 Secure - Scanning...';
+      }, 2000);
     }
   }
 
@@ -511,7 +563,6 @@
   // ═══════════════════════════════════════════════════
 
   function drawBox(box, name, similarity, color) {
-    // Draw bounding box
     ctx2.lineWidth = 3;
     ctx2.strokeStyle = color;
     ctx2.strokeRect(
@@ -521,7 +572,6 @@
       box.y_max - box.y_min
     );
 
-    // Draw label
     const label = similarity > 0 
       ? `${name} (${(similarity * 100).toFixed(1)}%)`
       : name;
@@ -529,19 +579,17 @@
     ctx2.font = 'bold 16px system-ui, sans-serif';
     const textWidth = ctx2.measureText(label).width;
     
-    // Background
     ctx2.fillStyle = color === '#4caf50' ? 'rgba(76, 175, 80, 0.85)' :
                      color === '#ff9800' ? 'rgba(255, 152, 0, 0.85)' :
                      'rgba(255, 235, 59, 0.85)';
     ctx2.fillRect(box.x_min, Math.max(0, box.y_min - 28), textWidth + 20, 26);
     
-    // Text
     ctx2.fillStyle = color === '#ffeb3b' ? '#333' : 'white';
     ctx2.fillText(label, box.x_min + 10, Math.max(18, box.y_min - 8));
   }
 
   // ═══════════════════════════════════════════════════
-  // DIFY NOTIFICATION (with debouncing)
+  // DIFY NOTIFICATION
   // ═══════════════════════════════════════════════════
 
   async function notifyDify(name, confidence, age, gender) {
@@ -549,7 +597,6 @@
     const debounceKey = `${CONFIG.CAMERA_ID}-${name}`;
     const lastTime = lastNotifyTime[debounceKey] || 0;
     
-    // Debounce: Don't notify same person within 3 seconds
     if (now - lastTime < CONFIG.DEBOUNCE_MS) {
       return;
     }
@@ -557,8 +604,6 @@
     lastNotifyTime[debounceKey] = now;
 
     try {
-      console.log(`[→] Notifying Dify about ${name}`);
-
       const response = await fetch(`${CONFIG.RELAY_URL}/face-event`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -579,30 +624,18 @@
       const data = await response.json();
       
       if (data.success) {
-        // Update conversation ID
         if (data.dify_response?.conversation_id) {
           conversationId = data.dify_response.conversation_id;
         }
         
-        console.log(`[✓] Dify notified:`, {
-          name,
-          conversation: conversationId,
-          answer_preview: data.dify_response?.answer?.substring(0, 50) + '...'
-        });
-        
+        console.log(`[✓] Dify notified: ${name}`);
         statusText.textContent = `✓ ${name} → AI notified`;
         setTimeout(() => {
-          statusText.textContent = '🔒 Secure - Scanning...';
+          if (running) statusText.textContent = '🔒 Secure - Scanning...';
         }, 2000);
-      } else if (data.debounced) {
-        console.log(`[⏸] Debounced: ${name}`);
-      } else {
-        console.warn('[⚠] Notification failed:', data);
       }
-
     } catch (err) {
       console.error('[✗] Dify notification error:', err);
-      statusText.textContent = '⚠ Relay connection failed';
     }
   }
 
@@ -619,20 +652,15 @@
   // ═══════════════════════════════════════════════════
 
   console.log('%c╔═══════════════════════════════════════════╗', 'color: #667eea');
-  console.log('%c║  CompreFace + Dify (Production Final)    ║', 'color: #667eea');
+  console.log('%c║  CompreFace + Dify (Optimized)           ║', 'color: #667eea');
   console.log('%c╚═══════════════════════════════════════════╝', 'color: #667eea');
-  console.log('%c✓ Secure relay architecture', 'color: #4caf50');
-  console.log('%c✓ Multi-face detection', 'color: #4caf50');
-  console.log('%c✓ Configurable thresholds', 'color: #4caf50');
-  console.log('%c✓ Auto-notify Dify on high confidence', 'color: #4caf50');
-  console.log('%c✓ 3-second debounce per person', 'color: #4caf50');
+  console.log('%c✓ Performance optimized', 'color: #4caf50');
+  console.log('%c✓ ECONNRESET protection', 'color: #4caf50');
+  console.log('%c✓ Configurable Dify URL', 'color: #4caf50');
   console.log('');
-  console.log('Configuration:');
-  console.log('  Relay URL:', CONFIG.RELAY_URL);
-  console.log('  Camera ID:', CONFIG.CAMERA_ID);
-  console.log('  Debounce:', CONFIG.DEBOUNCE_MS + 'ms');
-  console.log('');
-  console.log('Ready to start! Click "▶ Start Camera"');
+
+  // Load configuration from server
+  loadConfig();
 
 })();
 </script>
