@@ -82,12 +82,12 @@ app.post('/face-event', async (req, res) => {
       return res.status(400).json({ error: 'name is required' });
     }
 
-    // Debouncing: Don't spam same person within 3 seconds
+    // Debouncing: Don't spam same person within 15 seconds
     const debounceKey = `${camera_id || 'default'}-${name}`;
     const lastTime = lastNotification.get(debounceKey);
     const now = Date.now();
     
-    if (lastTime && (now - lastTime) < 3000) {
+    if (lastTime && (now - lastTime) < 15000) {
       console.log(`[DEBOUNCE] Skipping ${name}, last seen ${now - lastTime}ms ago`);
       return res.json({ 
         success: true, 

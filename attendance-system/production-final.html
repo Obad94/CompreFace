@@ -218,11 +218,6 @@
       </div>
 
       <div class="control-group">
-        <label>FPS (Frame Rate)</label>
-        <input id="fps" type="number" value="5" min="1" max="15">
-      </div>
-
-      <div class="control-group">
         <label>Min Similarity</label>
         <input id="minSimilarity" type="number" step="0.01" value="0.87" min="0.5" max="1">
       </div>
@@ -289,7 +284,7 @@
   const CONFIG = {
     RELAY_URL: 'http://localhost:8787',
     CAMERA_ID: 'entrance-01',
-    DEBOUNCE_MS: 3000,
+    DEBOUNCE_MS: 15000, // Match server-side debounce (15 seconds)
     FACE_PLUGINS: 'age,gender',
     // Dify chat URL - fetch from relay server
     DIFY_CHAT_URL: null
@@ -318,13 +313,11 @@
   
   let stream = null;
   let running = false;
-  let lastTick = 0;
   let totalDetections = 0;
   let lastNotifyTime = {};
   let fpsFrames = [];
   let conversationId = null;
-  let recognizing = false; // CRITICAL: Prevent overlapping requests
-  let lastRecognitionTime = 0; // Additional throttling
+  let recognizing = false; // Prevent overlapping requests
 
   // ═══════════════════════════════════════════════════
   // INITIALIZE - Load Dify chat URL from relay server
@@ -374,9 +367,7 @@
       await videoEl.play();
 
       running = true;
-      lastTick = 0;
       recognizing = false;
-      lastRecognitionTime = 0;
       
       startBtn.disabled = true;
       stopBtn.disabled = false;
@@ -387,7 +378,8 @@
       console.log('[✓] Optimized performance');
       console.log('[✓] ECONNRESET protection enabled');
 
-      requestAnimationFrame(loop);
+      // Start event-driven loop (like webcam_demo.html)
+      startLoop();
 
     } catch (err) {
       console.error('[✗] Camera error:', err);
@@ -399,6 +391,9 @@
   function stop() {
     running = false;
     recognizing = false;
+    
+    // Clean up event listener
+    document.removeEventListener("next_frame", draw);
     
     if (stream) {
       stream.getTracks().forEach(t => t.stop());
@@ -416,67 +411,99 @@
   }
 
   // ═══════════════════════════════════════════════════
-  // OPTIMIZED RECOGNITION LOOP
+  // HELPER FUNCTIONS
+  // ═══════════════════════════════════════════════════
+  // NON-BLOCKING RECOGNITION LOOP (Event-Driven)
   // ═══════════════════════════════════════════════════
 
-  async function loop(ts) {
+  async function draw() {
     if (!running) return;
 
-    // FPS throttling
-    const fps = Math.max(1, Math.min(15, Number(document.getElementById('fps').value) || 5));
-    const frameDuration = 1000 / fps;
-    
-    if (ts - lastTick < frameDuration) {
-      return requestAnimationFrame(loop);
-    }
-    
-    lastTick = ts;
-
     // Update FPS counter
-    fpsFrames.push(ts);
-    fpsFrames = fpsFrames.filter(t => ts - t < 1000);
+    const now = performance.now();
+    fpsFrames.push(now);
+    fpsFrames = fpsFrames.filter(t => now - t < 1000);
     fpsCounter.textContent = `FPS: ${fpsFrames.length}`;
 
-    // CRITICAL FIX: Don't overwhelm CompreFace
-    // If recognition is in progress, skip this frame
-    if (recognizing) {
-      requestAnimationFrame(loop);
-      return;
-    }
-
-    // Additional throttling: Minimum 500ms between requests
-    const now = Date.now();
-    if (now - lastRecognitionTime < 500) {
-      requestAnimationFrame(loop);
-      return;
-    }
-
-    lastRecognitionTime = now;
-    recognizing = true;
-
-    // Capture and recognize
+    // Always draw current video frame (NON-BLOCKING)
     ctx1.drawImage(videoEl, 0, 0, c1.width, c1.height);
     
+    // Convert to blob for recognition (PARALLEL, NON-BLOCKING)
+    // Use fixed 0.6 quality for recognition - optimal balance between speed & accuracy
     c1.toBlob(async (blob) => {
       try {
-        await recognize(blob);
+        // Immediate next frame trigger (like webcam_demo.html)
+        const evt = new Event("next_frame", {"bubbles": true, "cancelable": false});
+        document.dispatchEvent(evt);
+        
+        // Parallel recognition (don't await - fire and forget)
+        recognizeParallel(blob);
       } catch (err) {
         console.error('[✗] Recognition error:', err);
-      } finally {
-        recognizing = false;
-        if (running) requestAnimationFrame(loop);
+        // Still trigger next frame even on error
+        const evt = new Event("next_frame", {"bubbles": true, "cancelable": false});
+        document.dispatchEvent(evt);
       }
-    }, 'image/jpeg', 0.80); // Lower quality for better performance
+    }, 'image/jpeg', 0.6); // Fixed quality for optimal performance
+  }
+
+  // Event-driven loop like webcam_demo.html
+  function startLoop() {
+    document.addEventListener("next_frame", draw);
+    const evt = new Event("next_frame", {"bubbles": true, "cancelable": false});
+    document.dispatchEvent(evt);
   }
 
   // ═══════════════════════════════════════════════════
-  // FACE RECOGNITION WITH TIMEOUT
+  // PARALLEL FACE RECOGNITION (NON-BLOCKING)
   // ═══════════════════════════════════════════════════
 
-  async function recognize(blob) {
-    const minSimilarity = Number(document.getElementById('minSimilarity').value) || 0.87;
+  async function recognizeParallel(blob) {
+    // Don't block if recognition is in progress
+    if (recognizing) return;
+    
+    recognizing = true;
+    
+    try {
+      const result = await recognizeFrame(blob);
+      
+      // Always update display (non-blocking)
+      ctx2.clearRect(0, 0, c2.width, c2.height);
+      ctx2.drawImage(videoEl, 0, 0, c2.width, c2.height);
+      
+      if (result && result.result && result.result.length > 0) {
+        // Draw face boxes and trigger Dify (parallel)
+        for (const face of result.result) {
+          drawFaceBox(face);
+          
+          // Fire-and-forget Dify notification (don't await)
+          if (face.subjects && face.subjects.length > 0) {
+            const subject = face.subjects[0];
+            if (subject.subject && subject.similarity > 0.8) {
+              // Parallel Dify notification (non-blocking)
+              notifyDifyParallel(
+                subject.subject, 
+                subject.similarity, 
+                face.age?.value, 
+                face.gender?.value
+              );
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[✗] Recognition error:', err);
+    } finally {
+      recognizing = false;
+      // Clean up blob to prevent memory leaks
+      if (blob && blob.size > 0) {
+        URL.revokeObjectURL(blob);
+      }
+    }
+  }
+
+  async function recognizeFrame(blob) {
     const detProb = Number(document.getElementById('detProb').value) || 0.75;
-    const autoNotify = document.getElementById('autoNotify').value === 'true';
 
     const fd = new FormData();
     fd.append('file', blob, 'frame.jpg');
@@ -486,11 +513,11 @@
       face_plugins: CONFIG.FACE_PLUGINS
     });
 
-    try {
-      // Add timeout to prevent hanging requests
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+    // Reasonable timeout to prevent hanging requests
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000); // Increased to 8 seconds
 
+    try {
       const res = await fetch(url, {
         method: 'POST',
         body: fd,
@@ -504,63 +531,43 @@
       }
 
       const data = await res.json();
-
-      // Redraw video frame
-      ctx2.drawImage(videoEl, 0, 0, c2.width, c2.height);
-
-      if (!data || !Array.isArray(data.result) || data.result.length === 0) {
-        detectionCounter.textContent = 'Faces: 0';
-        return;
-      }
-
-      // Process faces
-      let validFaces = 0;
-      
-      for (const face of data.result) {
-        const box = face.box;
-        const subjects = face.subjects || [];
-        
-        if (subjects.length === 0) {
-          drawBox(box, 'Unknown', 0, '#ff9800');
-          continue;
-        }
-
-        const subject = subjects[0];
-        const name = subject.subject;
-        const similarity = subject.similarity;
-        const isValid = similarity >= minSimilarity;
-
-        if (isValid) {
-          validFaces++;
-          drawBox(box, name, similarity, '#4caf50');
-
-          if (autoNotify && similarity >= minSimilarity) {
-            await notifyDify(name, similarity, face.age, face.gender);
-          }
-        } else {
-          drawBox(box, name, similarity, '#ffeb3b');
-        }
-      }
-
-      detectionCounter.textContent = `Faces: ${validFaces}`;
-      totalDetections = validFaces;
+      return data;
 
     } catch (err) {
-      if (err.name === 'AbortError') {
-        console.warn('[⚠] Recognition timeout - skipping frame');
-      } else {
-        console.error('[✗] Recognition failed:', err);
-      }
-      statusText.textContent = '⚠ Recognition error';
-      setTimeout(() => {
-        if (running) statusText.textContent = '🔒 Secure - Scanning...';
-      }, 2000);
+      clearTimeout(timeoutId);
+      throw err;
     }
   }
 
   // ═══════════════════════════════════════════════════
   // DRAWING FUNCTIONS
   // ═══════════════════════════════════════════════════
+
+  function drawFaceBox(face) {
+    const box = face.box;
+    const subjects = face.subjects || [];
+    
+    if (subjects.length === 0) {
+      drawBox(box, 'Unknown', 0, '#ff9800');
+      return;
+    }
+
+    const subject = subjects[0];
+    const name = subject.subject;
+    const similarity = subject.similarity;
+    const minSimilarity = Number(document.getElementById('minSimilarity').value) || 0.87;
+    
+    // Update detection counter
+    const currentFaces = Number(detectionCounter.textContent.split(': ')[1]) || 0;
+    detectionCounter.textContent = `Faces: ${currentFaces + 1}`;
+
+    // Color based on similarity
+    const color = similarity >= 0.9 ? '#4caf50' :  // High confidence - green
+                 similarity >= 0.8 ? '#ff9800' :  // Medium confidence - orange
+                 '#ffeb3b';                        // Low confidence - yellow
+    
+    drawBox(box, name, similarity, color);
+  }
 
   function drawBox(box, name, similarity, color) {
     ctx2.lineWidth = 3;
@@ -589,8 +596,119 @@
   }
 
   // ═══════════════════════════════════════════════════
-  // DIFY NOTIFICATION
+  // AI RESPONSE DISPLAY
   // ═══════════════════════════════════════════════════
+
+  function displayAIResponse(name, response, isSuccess = true) {
+    // Create response notification
+    const notification = document.createElement('div');
+    notification.className = `ai-notification ${isSuccess ? 'success' : 'error'}`;
+    notification.innerHTML = `
+      <div class="notification-header">
+        <strong>🤖 AI Assistant</strong>
+        <span class="timestamp">${new Date().toLocaleTimeString()}</span>
+      </div>
+      <div class="notification-body">
+        <div class="student-info">📋 <strong>${name}</strong> detected</div>
+        <div class="ai-response">${response}</div>
+      </div>
+    `;
+
+    // Add styles for notification
+    if (!document.getElementById('notification-styles')) {
+      const styles = document.createElement('style');
+      styles.id = 'notification-styles';
+      styles.textContent = `
+        .ai-notification {
+          position: fixed;
+          top: 20px;
+          right: 20px;
+          max-width: 400px;
+          background: white;
+          border-left: 4px solid #4caf50;
+          border-radius: 8px;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+          padding: 16px;
+          margin-bottom: 10px;
+          z-index: 1000;
+          font-family: system-ui, sans-serif;
+          animation: slideIn 0.3s ease-out;
+        }
+        .ai-notification.error {
+          border-left-color: #f44336;
+        }
+        .notification-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 8px;
+          font-size: 14px;
+        }
+        .timestamp {
+          color: #666;
+          font-size: 12px;
+        }
+        .student-info {
+          color: #2196F3;
+          font-weight: 500;
+          margin-bottom: 8px;
+        }
+        .ai-response {
+          color: #333;
+          line-height: 1.4;
+          white-space: pre-line;
+          max-height: 200px;
+          overflow-y: auto;
+        }
+        @keyframes slideIn {
+          from {
+            transform: translateX(100%);
+            opacity: 0;
+          }
+          to {
+            transform: translateX(0);
+            opacity: 1;
+          }
+        }
+        @keyframes slideOut {
+          from {
+            transform: translateX(0);
+            opacity: 1;
+          }
+          to {
+            transform: translateX(100%);
+            opacity: 0;
+          }
+        }
+      `;
+      document.head.appendChild(styles);
+    }
+
+    document.body.appendChild(notification);
+
+    // Auto-remove after 8 seconds
+    setTimeout(() => {
+      if (notification.parentNode) {
+        notification.style.animation = 'slideOut 0.3s ease-in';
+        notification.addEventListener('animationend', () => {
+          if (notification.parentNode) {
+            notification.parentNode.removeChild(notification);
+          }
+        });
+      }
+    }, 8000);
+  }
+
+  // ═══════════════════════════════════════════════════
+  // PARALLEL DIFY NOTIFICATION (FIRE-AND-FORGET)
+  // ═══════════════════════════════════════════════════
+
+  function notifyDifyParallel(name, confidence, age, gender) {
+    // Fire-and-forget - don't block video stream
+    notifyDify(name, confidence, age, gender).catch(err => {
+      console.error('[✗] Dify notification failed:', err);
+    });
+  }
 
   async function notifyDify(name, confidence, age, gender) {
     const now = Date.now();
@@ -628,14 +746,23 @@
           conversationId = data.dify_response.conversation_id;
         }
         
+        // Display AI response in notification
+        if (data.dify_response?.answer) {
+          displayAIResponse(name, data.dify_response.answer, true);
+        }
+        
         console.log(`[✓] Dify notified: ${name}`);
-        statusText.textContent = `✓ ${name} → AI notified`;
+        statusText.textContent = `✓ ${name} → AI responded`;
         setTimeout(() => {
           if (running) statusText.textContent = '🔒 Secure - Scanning...';
-        }, 2000);
+        }, 3000);
+      } else if (data.debounced) {
+        // Don't show error for debounced requests
+        console.log(`[ℹ] ${name} debounced`);
       }
     } catch (err) {
       console.error('[✗] Dify notification error:', err);
+      displayAIResponse(name, `Connection error: ${err.message}`, false);
     }
   }
 
