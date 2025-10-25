@@ -111,21 +111,47 @@ app.post('/face-event', async (req, res) => {
 
     // Get or create conversation ID
     const convId = conversation_id || conversations.get(camera_id || 'default');
+    // // Prepare Dify payload
+    // const difyPayload = {
+    //   inputs: {
+    //     person_name: name,
+    //     confidence: confidence || 1.0,
+    //     camera_id: camera_id || 'entrance',
+    //     timestamp: detection.timestamp,
+    //     ...(metadata || {})
+    //   },
+    //   query: `Student ${name} has been detected at ${camera_id || 'entrance'} with ${((confidence || 1) * 100).toFixed(1)}% confidence. Please provide their information and status.`,
+    //   response_mode: 'blocking', // Use 'streaming' for SSE
+    //   user: camera_id || 'camera-01',
+    //   conversation_id: convId || undefined
+    // };
 
-    // Prepare Dify payload
+    // Prepare Dify payload (recommended)
     const difyPayload = {
       inputs: {
-        person_name: name,
-        confidence: confidence || 1.0,
-        camera_id: camera_id || 'entrance',
+        person_name: name,                   // required by your prompt
+        confidence: confidence ?? 1.0,
+        camera_id: camera_id || 'entrance-01',
+        direction: '',                       // empty = missing; bot will ask
+        approval: '',                        // empty = missing; bot will ask
         timestamp: detection.timestamp,
-        ...(metadata || {})
+        detection_id: metadata?.detection_id || undefined, // if you have it
+        ...((metadata || {})),              // age, gender, etc. are fine to include
       },
-      query: `Student ${name} has been detected at ${camera_id || 'entrance'} with ${((confidence || 1) * 100).toFixed(1)}% confidence. Please provide their information and status.`,
-      response_mode: 'blocking', // Use 'streaming' for SSE
-      user: camera_id || 'camera-01',
+
+      // Keep this a constant trigger so the LLM state machine stays stable
+      query: 'FACE_DETECTED',
+
+      response_mode: 'blocking',            // streaming also works if you handle SSE
+      user: (camera_id && metadata?.detection_id)
+            ? `${camera_id}:${metadata.detection_id}`
+            : (camera_id || 'camera-01'),
+
+      // Only include when you’re continuing the same thread.
+      // Omit/undefined to start a new one.
       conversation_id: convId || undefined
     };
+
 
     console.log('[DIFY] Sending to Dify:', {
       name,
