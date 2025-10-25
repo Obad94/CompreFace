@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CompreFace + Dify - Production (Final)</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { 
+      display: flex; 
+      height: 100vh; 
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      overflow: hidden;
+    }
+
+    .left { 
+      flex: 1; 
+      display: flex;
+      flex-direction: column;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      color: #eee;
+      position: relative;
+    }
+
+    .controls {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      right: 16px;
+      background: rgba(0, 0, 0, 0.8);
+      backdrop-filter: blur(10px);
+      padding: 16px;
+      border-radius: 12px;
+      z-index: 10;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 10px;
+    }
+
+    .control-group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .control-group label {
+      font-size: 11px;
+      opacity: 0.8;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .control-group input {
+      padding: 6px 10px;
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 6px;
+      background: rgba(255,255,255,0.1);
+      color: white;
+      font-size: 13px;
+    }
+
+    .control-group input::placeholder {
+      color: rgba(255,255,255,0.5);
+    }
+
+    .button-group {
+      grid-column: span 2;
+      display: flex;
+      gap: 10px;
+    }
+
+    button {
+      flex: 1;
+      padding: 10px 16px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      transition: all 0.2s;
+    }
+
+    #startBtn {
+      background: linear-gradient(135deg, #4caf50, #45a049);
+      color: white;
+    }
+
+    #stopBtn {
+      background: linear-gradient(135deg, #f44336, #e53935);
+      color: white;
+    }
+
+    button:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .security-badge {
+      grid-column: span 2;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      background: rgba(76, 175, 80, 0.2);
+      padding: 8px;
+      border-radius: 6px;
+      font-size: 11px;
+      color: #4caf50;
+      font-weight: 600;
+    }
+
+    .security-badge::before {
+      content: "🔒";
+      font-size: 14px;
+    }
+
+    .video-wrapper {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 140px 20px 20px;
+    }
+
+    #canvas2 {
+      max-width: 100%;
+      max-height: 100%;
+      border-radius: 12px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    }
+
+    .status-bar {
+      background: rgba(0,0,0,0.6);
+      padding: 12px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      border-top: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .status-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #4caf50;
+      animation: pulse 2s infinite;
+    }
+
+    .status-dot.inactive {
+      background: #9e9e9e;
+      animation: none;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.6; transform: scale(0.9); }
+    }
+
+    .right {
+      width: 420px;
+      border-left: 1px solid rgba(0,0,0,0.1);
+      background: white;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .chat-header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 20px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+
+    .chat-header h2 {
+      font-size: 20px;
+      margin-bottom: 4px;
+    }
+
+    .chat-header p {
+      font-size: 13px;
+      opacity: 0.9;
+    }
+
+    #difyEmbed {
+      flex: 1;
+      border: none;
+      background: #f8f9fa;
+    }
+
+    #live, #canvas { display: none; }
+
+    @media (max-width: 768px) {
+      body { flex-direction: column; }
+      .right { width: 100%; max-height: 50vh; }
+      .controls { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="left">
+    <div class="controls">
+      <div class="security-badge">
+        SECURE MODE - NO API KEYS IN BROWSER
+      </div>
+
+      <div class="control-group">
+        <label>FPS (Frame Rate)</label>
+        <input id="fps" type="number" value="10" min="1" max="30">
+      </div>
+
+      <div class="control-group">
+        <label>Min Similarity</label>
+        <input id="minSimilarity" type="number" step="0.01" value="0.87" min="0.5" max="1">
+      </div>
+
+      <div class="control-group">
+        <label>Detection Prob</label>
+        <input id="detProb" type="number" step="0.05" value="0.75" min="0.5" max="1">
+      </div>
+
+      <div class="control-group">
+        <label>Auto-Notify AI</label>
+        <select id="autoNotify" style="padding: 6px 10px; border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; background: rgba(255,255,255,0.1); color: white; font-size: 13px;">
+          <option value="true">Enabled</option>
+          <option value="false">Disabled</option>
+        </select>
+      </div>
+
+      <div class="button-group">
+        <button id="startBtn">▶ Start Camera</button>
+        <button id="stopBtn" disabled>⏹ Stop</button>
+      </div>
+    </div>
+
+    <div class="video-wrapper">
+      <video id="live" width="640" height="480" autoplay muted playsinline></video>
+      <canvas id="canvas" width="640" height="480"></canvas>
+      <canvas id="canvas2" width="640" height="480"></canvas>
+    </div>
+
+    <div class="status-bar">
+      <div class="status-indicator">
+        <div class="status-dot inactive" id="statusDot"></div>
+        <span id="statusText">Ready - Click Start</span>
+      </div>
+      <span id="fpsCounter">FPS: 0</span>
+      <span id="detectionCounter">Faces: 0</span>
+    </div>
+  </div>
+
+  <div class="right">
+    <div class="chat-header">
+      <h2>🤖 AI Assistant</h2>
+      <p>Powered by Dify - Real-time student information</p>
+    </div>
+    
+    <!-- IMPORTANT: Replace with your actual Dify embed URL -->
+    <!-- Dify Chatbot Embed -->
+    <iframe 
+      id="difyEmbed"
+      src="http://localhost/chat/KjfiZpNJ1Klg1Ueb"
+      style="width: 100%; height: 100%; border: none;"
+      frameborder="0"
+      allow="microphone; clipboard-write; camera">
+    </iframe>
+    <!-- 
+      To get your Dify embed URL:
+      1. Go to Dify dashboard
+      2. Open your chatbot app
+      3. Click "Publish" → "Embed"
+      4. Copy the iframe src URL
+      5. Replace above
+    -->
+  </div>
+
+<script>
+(function() {
+  'use strict';
+
+  // ═══════════════════════════════════════════════════
+  // CONFIGURATION
+  // ═══════════════════════════════════════════════════
+  
+  const CONFIG = {
+    RELAY_URL: 'http://localhost:8787',
+    CAMERA_ID: 'entrance-01', // Change per camera location
+    DEBOUNCE_MS: 3000, // Don't notify same person within 3 seconds
+    FACE_PLUGINS: 'age,gender', // Optional: age, gender, mask, landmarks
+  };
+
+  // ═══════════════════════════════════════════════════
+  // DOM ELEMENTS
+  // ═══════════════════════════════════════════════════
+  
+  const videoEl = document.getElementById('live');
+  const c1 = document.getElementById('canvas');
+  const c2 = document.getElementById('canvas2');
+  const ctx1 = c1.getContext('2d');
+  const ctx2 = c2.getContext('2d');
+  const startBtn = document.getElementById('startBtn');
+  const stopBtn = document.getElementById('stopBtn');
+  const statusDot = document.getElementById('statusDot');
+  const statusText = document.getElementById('statusText');
+  const fpsCounter = document.getElementById('fpsCounter');
+  const detectionCounter = document.getElementById('detectionCounter');
+
+  // ═══════════════════════════════════════════════════
+  // STATE
+  // ═══════════════════════════════════════════════════
+  
+  let stream = null;
+  let running = false;
+  let lastTick = 0;
+  let totalDetections = 0;
+  let lastNotifyTime = {}; // {camera_id-name: timestamp} for debouncing
+  let fpsFrames = [];
+  let conversationId = null;
+
+  // ═══════════════════════════════════════════════════
+  // CAMERA CONTROL
+  // ═══════════════════════════════════════════════════
+
+  async function start() {
+    if (running) return;
+
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: 640, height: 480 }
+      });
+      
+      videoEl.srcObject = stream;
+      await videoEl.play();
+
+      running = true;
+      lastTick = 0;
+      
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+      statusDot.classList.remove('inactive');
+      statusText.textContent = '🔒 Secure - Scanning...';
+
+      console.log('%c[✓] SECURE MODE ACTIVE', 'color: #4caf50; font-weight: bold');
+      console.log('[✓] All API keys secured on server');
+      console.log('[✓] Multi-face detection enabled');
+      console.log('[✓] Configurable thresholds active');
+
+      requestAnimationFrame(loop);
+
+    } catch (err) {
+      console.error('[✗] Camera error:', err);
+      alert(`Camera access failed: ${err.message}`);
+      running = false;
+    }
+  }
+
+  function stop() {
+    running = false;
+    
+    if (stream) {
+      stream.getTracks().forEach(t => t.stop());
+      stream = null;
+    }
+    
+    videoEl.srcObject = null;
+    ctx2.clearRect(0, 0, c2.width, c2.height);
+    
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+    statusDot.classList.add('inactive');
+    statusText.textContent = 'Stopped';
+    fpsCounter.textContent = 'FPS: 0';
+  }
+
+  // ═══════════════════════════════════════════════════
+  // RECOGNITION LOOP
+  // ═══════════════════════════════════════════════════
+
+  async function loop(ts) {
+    if (!running) return;
+
+    // FPS throttling
+    const fps = Math.max(1, Math.min(30, Number(document.getElementById('fps').value) || 10));
+    const frameDuration = 1000 / fps;
+    
+    if (ts - lastTick < frameDuration) {
+      return requestAnimationFrame(loop);
+    }
+    
+    lastTick = ts;
+
+    // Update FPS counter
+    fpsFrames.push(ts);
+    fpsFrames = fpsFrames.filter(t => ts - t < 1000);
+    fpsCounter.textContent = `FPS: ${fpsFrames.length}`;
+
+    // Capture and recognize
+    ctx1.drawImage(videoEl, 0, 0, c1.width, c1.height);
+    
+    c1.toBlob(async (blob) => {
+      try {
+        await recognize(blob);
+      } catch (err) {
+        console.error('[✗] Recognition error:', err);
+      } finally {
+        if (running) requestAnimationFrame(loop);
+      }
+    }, 'image/jpeg', 0.90);
+  }
+
+  // ═══════════════════════════════════════════════════
+  // FACE RECOGNITION
+  // ═══════════════════════════════════════════════════
+
+  async function recognize(blob) {
+    const minSimilarity = Number(document.getElementById('minSimilarity').value) || 0.87;
+    const detProb = Number(document.getElementById('detProb').value) || 0.75;
+    const autoNotify = document.getElementById('autoNotify').value === 'true';
+
+    // Build request
+    const fd = new FormData();
+    fd.append('file', blob, 'frame.jpg');
+
+    // Send to SECURE relay endpoint (not directly to CompreFace!)
+    const url = `${CONFIG.RELAY_URL}/recognize-frame?` + new URLSearchParams({
+      det_prob_threshold: detProb,
+      face_plugins: CONFIG.FACE_PLUGINS
+    });
+
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        body: fd
+        // NO API KEY - relay handles it securely!
+      });
+
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+
+      // Redraw video frame
+      ctx2.drawImage(videoEl, 0, 0, c2.width, c2.height);
+
+      if (!data || !Array.isArray(data.result) || data.result.length === 0) {
+        // No faces detected
+        detectionCounter.textContent = 'Faces: 0';
+        return;
+      }
+
+      // MULTI-FACE SUPPORT: Process ALL detected faces
+      let validFaces = 0;
+      
+      for (const face of data.result) {
+        const box = face.box;
+        const subjects = face.subjects || [];
+        
+        if (subjects.length === 0) {
+          // Face detected but not recognized - draw orange box
+          drawBox(box, 'Unknown', 0, '#ff9800');
+          continue;
+        }
+
+        // Get best match
+        const subject = subjects[0];
+        const name = subject.subject;
+        const similarity = subject.similarity;
+        const isValid = similarity >= minSimilarity;
+
+        if (isValid) {
+          validFaces++;
+          
+          // Draw green box for valid detection
+          drawBox(box, name, similarity, '#4caf50');
+
+          // Auto-notify Dify if enabled and confidence is high
+          if (autoNotify && similarity >= minSimilarity) {
+            await notifyDify(name, similarity, face.age, face.gender);
+          }
+        } else {
+          // Low confidence - draw yellow box
+          drawBox(box, name, similarity, '#ffeb3b');
+        }
+      }
+
+      detectionCounter.textContent = `Faces: ${validFaces}`;
+      totalDetections = validFaces;
+
+    } catch (err) {
+      console.error('[✗] Recognition failed:', err);
+      statusText.textContent = '⚠ Recognition error';
+    }
+  }
+
+  // ═══════════════════════════════════════════════════
+  // DRAWING FUNCTIONS
+  // ═══════════════════════════════════════════════════
+
+  function drawBox(box, name, similarity, color) {
+    // Draw bounding box
+    ctx2.lineWidth = 3;
+    ctx2.strokeStyle = color;
+    ctx2.strokeRect(
+      box.x_min,
+      box.y_min,
+      box.x_max - box.x_min,
+      box.y_max - box.y_min
+    );
+
+    // Draw label
+    const label = similarity > 0 
+      ? `${name} (${(similarity * 100).toFixed(1)}%)`
+      : name;
+    
+    ctx2.font = 'bold 16px system-ui, sans-serif';
+    const textWidth = ctx2.measureText(label).width;
+    
+    // Background
+    ctx2.fillStyle = color === '#4caf50' ? 'rgba(76, 175, 80, 0.85)' :
+                     color === '#ff9800' ? 'rgba(255, 152, 0, 0.85)' :
+                     'rgba(255, 235, 59, 0.85)';
+    ctx2.fillRect(box.x_min, Math.max(0, box.y_min - 28), textWidth + 20, 26);
+    
+    // Text
+    ctx2.fillStyle = color === '#ffeb3b' ? '#333' : 'white';
+    ctx2.fillText(label, box.x_min + 10, Math.max(18, box.y_min - 8));
+  }
+
+  // ═══════════════════════════════════════════════════
+  // DIFY NOTIFICATION (with debouncing)
+  // ═══════════════════════════════════════════════════
+
+  async function notifyDify(name, confidence, age, gender) {
+    const now = Date.now();
+    const debounceKey = `${CONFIG.CAMERA_ID}-${name}`;
+    const lastTime = lastNotifyTime[debounceKey] || 0;
+    
+    // Debounce: Don't notify same person within 3 seconds
+    if (now - lastTime < CONFIG.DEBOUNCE_MS) {
+      return;
+    }
+    
+    lastNotifyTime[debounceKey] = now;
+
+    try {
+      console.log(`[→] Notifying Dify about ${name}`);
+
+      const response = await fetch(`${CONFIG.RELAY_URL}/face-event`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          event: 'face_detected',
+          name,
+          confidence,
+          conversation_id: conversationId,
+          camera_id: CONFIG.CAMERA_ID,
+          metadata: {
+            age: age || null,
+            gender: gender || null,
+            timestamp: new Date().toISOString()
+          }
+        })
+      });
+
+      const data = await response.json();
+      
+      if (data.success) {
+        // Update conversation ID
+        if (data.dify_response?.conversation_id) {
+          conversationId = data.dify_response.conversation_id;
+        }
+        
+        console.log(`[✓] Dify notified:`, {
+          name,
+          conversation: conversationId,
+          answer_preview: data.dify_response?.answer?.substring(0, 50) + '...'
+        });
+        
+        statusText.textContent = `✓ ${name} → AI notified`;
+        setTimeout(() => {
+          statusText.textContent = '🔒 Secure - Scanning...';
+        }, 2000);
+      } else if (data.debounced) {
+        console.log(`[⏸] Debounced: ${name}`);
+      } else {
+        console.warn('[⚠] Notification failed:', data);
+      }
+
+    } catch (err) {
+      console.error('[✗] Dify notification error:', err);
+      statusText.textContent = '⚠ Relay connection failed';
+    }
+  }
+
+  // ═══════════════════════════════════════════════════
+  // EVENT LISTENERS
+  // ═══════════════════════════════════════════════════
+
+  startBtn.addEventListener('click', start);
+  stopBtn.addEventListener('click', stop);
+  window.addEventListener('beforeunload', stop);
+
+  // ═══════════════════════════════════════════════════
+  // INITIALIZATION
+  // ═══════════════════════════════════════════════════
+
+  console.log('%c╔═══════════════════════════════════════════╗', 'color: #667eea');
+  console.log('%c║  CompreFace + Dify (Production Final)    ║', 'color: #667eea');
+  console.log('%c╚═══════════════════════════════════════════╝', 'color: #667eea');
+  console.log('%c✓ Secure relay architecture', 'color: #4caf50');
+  console.log('%c✓ Multi-face detection', 'color: #4caf50');
+  console.log('%c✓ Configurable thresholds', 'color: #4caf50');
+  console.log('%c✓ Auto-notify Dify on high confidence', 'color: #4caf50');
+  console.log('%c✓ 3-second debounce per person', 'color: #4caf50');
+  console.log('');
+  console.log('Configuration:');
+  console.log('  Relay URL:', CONFIG.RELAY_URL);
+  console.log('  Camera ID:', CONFIG.CAMERA_ID);
+  console.log('  Debounce:', CONFIG.DEBOUNCE_MS + 'ms');
+  console.log('');
+  console.log('Ready to start! Click "▶ Start Camera"');
+
+})();
+</script>
+
+</body>
+</html>

@@ -51,3 +51,5 @@ __pycache__/
 *.temp
 temp/
 tmp/
+
+node_modules/
