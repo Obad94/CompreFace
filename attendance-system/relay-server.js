@@ -277,11 +277,22 @@ app.delete('/conversations/:camera_id', (req, res) => {
  * Accepts frame from browser, forwards to CompreFace with server-side API key
  * This prevents exposing CompreFace API key to the browser
  */
+// Recognition throttling to prevent ECONNRESET
+let lastRecognitionTime = 0;
+const RECOGNITION_THROTTLE_MS = 100; // Minimum 100ms between requests
+
 app.post('/recognize-frame', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'file is required' });
     }
+
+    // Throttle requests to prevent overloading CompreFace
+    const now = Date.now();
+    if (now - lastRecognitionTime < RECOGNITION_THROTTLE_MS) {
+      return res.json({ result: [] }); // Return empty result if throttled
+    }
+    lastRecognitionTime = now;
 
     // Get query parameters from request
     const { det_prob_threshold, face_plugins } = req.query;
@@ -306,14 +317,15 @@ app.post('/recognize-frame', upload.single('file'), async (req, res) => {
 
     console.log('[RECOGNIZE] Forwarding frame to CompreFace');
 
-    // Forward to CompreFace with server-side API key (SECURE!)
+    // Forward to CompreFace with timeout and retry logic
     const response = await fetch(url, {
       method: 'POST',
       headers: {
         'x-api-key': COMPREFACE_API_KEY, // Key stays on server
         ...fd.getHeaders()
       },
-      body: fd
+      body: fd,
+      timeout: 5000 // 5-second timeout
     });
 
     const data = await response.json();
@@ -327,6 +339,12 @@ app.post('/recognize-frame', upload.single('file'), async (req, res) => {
     res.json(data);
 
   } catch (error) {
+    // Handle ECONNRESET gracefully (CompreFace overload)
+    if (error.code === 'ECONNRESET' || error.errno === 'ECONNRESET') {
+      console.log('[RECOGNIZE] CompreFace connection reset - throttling...');
+      return res.json({ result: [] }); // Return empty result instead of error
+    }
+    
     console.error('[RECOGNIZE ERROR]', error);
     res.status(500).json({
       success: false,

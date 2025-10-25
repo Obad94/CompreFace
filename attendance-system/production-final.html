@@ -318,6 +318,8 @@
   let fpsFrames = [];
   let conversationId = null;
   let recognizing = false; // Prevent overlapping requests
+  let frameCounter = 0; // Frame skipping counter
+  const FRAME_SKIP = 3; // Process every 3rd frame (reduces load by ~70%)
 
   // ═══════════════════════════════════════════════════
   // INITIALIZE - Load Dify chat URL from relay server
@@ -428,21 +430,30 @@
     // Always draw current video frame (NON-BLOCKING)
     ctx1.drawImage(videoEl, 0, 0, c1.width, c1.height);
     
+    // Frame skipping: Only process every 3rd frame for recognition
+    frameCounter++;
+    
+    // Always schedule next frame (smooth video, prevents stack overflow)
+    requestAnimationFrame(() => {
+      if (running) {
+        const evt = new Event("next_frame", {"bubbles": true, "cancelable": false});
+        document.dispatchEvent(evt);
+      }
+    });
+    
+    // Skip recognition processing for most frames (reduce CompreFace load)
+    if (frameCounter % FRAME_SKIP !== 0) {
+      return; // Skip this frame - no recognition processing
+    }
+    
     // Convert to blob for recognition (PARALLEL, NON-BLOCKING)
     // Use fixed 0.6 quality for recognition - optimal balance between speed & accuracy
     c1.toBlob(async (blob) => {
       try {
-        // Immediate next frame trigger (like webcam_demo.html)
-        const evt = new Event("next_frame", {"bubbles": true, "cancelable": false});
-        document.dispatchEvent(evt);
-        
         // Parallel recognition (don't await - fire and forget)
         recognizeParallel(blob);
       } catch (err) {
         console.error('[✗] Recognition error:', err);
-        // Still trigger next frame even on error
-        const evt = new Event("next_frame", {"bubbles": true, "cancelable": false});
-        document.dispatchEvent(evt);
       }
     }, 'image/jpeg', 0.6); // Fixed quality for optimal performance
   }
